@@ -17,10 +17,18 @@ BM25 hoạt động thế nào:
 
 import math
 from collections import Counter
+from functools import lru_cache
 
-from .local_retrieval import get_chunks, tokenize
+from .local_retrieval import corpus_idf, cosine_from_counters, get_chunks, tokenize
 
 CORPUS: list[dict] = []  # Lazy-loaded list of {'content': str, 'metadata': dict}
+
+
+def _get_corpus() -> list[dict]:
+    global CORPUS
+    if not CORPUS:
+        CORPUS = list(get_chunks())
+    return CORPUS
 
 
 def build_bm25_index(corpus: list[dict]):
@@ -43,6 +51,19 @@ def build_bm25_index(corpus: list[dict]):
     }
 
 
+@lru_cache(maxsize=1)
+def _cached_bm25_index():
+    return build_bm25_index(tuple(_get_corpus()))
+
+
+@lru_cache(maxsize=1)
+def _cached_tfidf_index():
+    corpus = tuple(_get_corpus())
+    tokenized_docs = tuple(tuple(tokenize(doc["content"])) for doc in corpus)
+    idf = corpus_idf([list(tokens) for tokens in tokenized_docs])
+    return corpus, tokenized_docs, idf
+
+
 def lexical_search(query: str, top_k: int = 10) -> list[dict]:
     """
     Tìm kiếm từ khóa sử dụng BM25.
@@ -59,13 +80,11 @@ def lexical_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    global CORPUS
-    if not CORPUS:
-        CORPUS = list(get_chunks())
-    if not CORPUS or top_k <= 0:
+    corpus = _get_corpus()
+    if not corpus or top_k <= 0:
         return []
 
-    index = build_bm25_index(CORPUS)
+    index = _cached_bm25_index()
     query_tokens = tokenize(query)
     k1 = 1.5
     b = 0.75
@@ -90,11 +109,41 @@ def lexical_search(query: str, top_k: int = 10) -> list[dict]:
         if score <= 0:
             continue
         results.append({
-            "content": CORPUS[idx]["content"],
+            "content": corpus[idx]["content"],
             "score": float(score),
-            "metadata": dict(CORPUS[idx].get("metadata", {})),
+            "metadata": dict(corpus[idx].get("metadata", {})),
         })
     return results
+
+
+def tfidf_lexical_search(query: str, top_k: int = 10) -> list[dict]:
+    """
+    Bonus lexical alternative: TF-IDF cosine search.
+
+    TF-IDF weights frequent query/document terms by inverse document frequency,
+    then ranks chunks by cosine similarity. Unlike BM25, this implementation
+    does not use term saturation or document-length normalization parameters.
+    """
+    corpus, tokenized_docs, idf = _cached_tfidf_index()
+    if not corpus or top_k <= 0:
+        return []
+
+    query_vector = Counter(tokenize(query))
+
+    results = []
+    for doc, tokens in zip(corpus, tokenized_docs):
+        score = cosine_from_counters(query_vector, Counter(tokens), idf)
+        if score <= 0:
+            continue
+        results.append({
+            "content": doc["content"],
+            "score": float(score),
+            "metadata": dict(doc.get("metadata", {})),
+            "source": "tfidf",
+        })
+
+    results.sort(key=lambda item: item["score"], reverse=True)
+    return results[:top_k]
 
 
 if __name__ == "__main__":

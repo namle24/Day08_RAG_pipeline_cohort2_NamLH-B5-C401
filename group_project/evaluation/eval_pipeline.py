@@ -22,6 +22,8 @@ from src.local_retrieval import tokenize
 from src.task10_generation import _offline_answer, reorder_for_llm
 from src.task5_semantic_search import semantic_search
 from src.task9_retrieval_pipeline import retrieve
+from src.bonus_hyde import hyde_search
+from group_project.pipeline_registry import list_pipelines
 
 
 GOLDEN_DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
@@ -108,6 +110,8 @@ def run_config(question: str, config_name: str, top_k: int = 5) -> dict:
         chunks = semantic_search(question, top_k=top_k)
         for chunk in chunks:
             chunk["source"] = "hybrid"
+    elif config_name == "hyde":
+        chunks = hyde_search(question, top_k=top_k)
     else:
         raise ValueError(f"Unknown config: {config_name}")
 
@@ -144,7 +148,36 @@ def compare_configs(golden_dataset: list[dict]) -> dict:
     return {
         "hybrid_rerank": evaluate_config(golden_dataset, "hybrid_rerank"),
         "dense_only": evaluate_config(golden_dataset, "dense_only"),
+        "hyde": evaluate_config(golden_dataset, "hyde"),
     }
+
+
+def evaluate_member_pipelines(golden_dataset: list[dict]) -> dict:
+    results = {}
+    for pipeline in list_pipelines():
+        cases = []
+        for item in golden_dataset:
+            result = pipeline.answer(item["question"], top_k=5)
+            chunks = result.get("sources", [])
+            scores = _score_case(item, result.get("answer", ""), chunks)
+            cases.append({
+                "question": item["question"],
+                "scores": scores,
+                "average": round(statistics.mean(scores.values()), 3),
+            })
+        summary = {
+            metric: round(statistics.mean(case["scores"][metric] for case in cases), 3)
+            for metric in METRICS
+        }
+        summary["average"] = round(statistics.mean(summary.values()), 3)
+        results[pipeline.key] = {
+            "owner": pipeline.owner,
+            "student_id": pipeline.student_id,
+            "role": pipeline.role,
+            "summary": summary,
+            "cases": cases,
+        }
+    return results
 
 
 def _metric_label(metric: str) -> str:
@@ -161,9 +194,10 @@ def _bottom_cases(config_result: dict, limit: int = 3) -> list[dict]:
     return sorted(config_result["cases"], key=lambda case: case["average"])[:limit]
 
 
-def export_results(comparison: dict) -> None:
+def export_results(comparison: dict, member_results: dict) -> None:
     config_a = comparison["hybrid_rerank"]
     config_b = comparison["dense_only"]
+    config_hyde = comparison["hyde"]
     lines = [
         "# RAG Evaluation Results",
         "",
@@ -201,6 +235,43 @@ def export_results(comparison: dict) -> None:
     lines.extend([
         "**Kết luận:**",
         f"{better} tốt hơn theo điểm trung bình. Hybrid + rerank thường cải thiện recall vì BM25 giữ lại từ khóa pháp lý/tên riêng, còn dense-only ổn với câu hỏi ngắn nhưng dễ thiếu đúng source khi query có thực thể cụ thể.",
+        "",
+        "---",
+        "",
+        "## Bonus Config: HyDE",
+        "",
+        "| Metric | HyDE query expansion |",
+        "|--------|----------------------|",
+    ])
+
+    for metric in [*METRICS, "average"]:
+        lines.append(f"| {_metric_label(metric)} | {config_hyde['summary'][metric]:.3f} |")
+
+    lines.extend([
+        "",
+        "HyDE tạo một tài liệu giả định từ query, nối với query gốc rồi retrieve trên query mở rộng. Cấu hình này dùng để demo bonus HyDE, đặc biệt hữu ích khi câu hỏi ngắn hoặc thiếu từ khóa chính xác trong tài liệu.",
+        "",
+        "---",
+        "",
+        "## Team Pipeline Benchmark",
+        "",
+        "| Pipeline | Thành viên | Role | Faithfulness | Relevance | Recall | Precision | Average |",
+        "|----------|------------|------|--------------|-----------|--------|-----------|---------|",
+    ])
+
+    for key, result in member_results.items():
+        summary = result["summary"]
+        role = result["role"].replace("|", "/")
+        owner = f"{result['owner']} ({result['student_id']})"
+        lines.append(
+            f"| {key} | {owner} | {role} | {summary['faithfulness']:.3f} | "
+            f"{summary['answer_relevance']:.3f} | {summary['context_recall']:.3f} | "
+            f"{summary['context_precision']:.3f} | {summary['average']:.3f} |"
+        )
+
+    lines.extend([
+        "",
+        "Bảng này chứng minh app nhóm đã tích hợp đủ 6 adapter pipeline, mỗi adapter có owner, role và retrieval focus riêng trong `group_project/pipeline_registry.py`.",
         "",
         "---",
         "",
@@ -248,10 +319,13 @@ def main() -> None:
     golden_dataset = load_golden_dataset()
     print(f"Loaded {len(golden_dataset)} test cases")
     comparison = compare_configs(golden_dataset)
-    export_results(comparison)
+    member_results = evaluate_member_pipelines(golden_dataset)
+    export_results(comparison, member_results)
     print(f"Wrote evaluation report to {RESULTS_PATH}")
     for config_name, result in comparison.items():
         print(config_name, result["summary"])
+    for key, result in member_results.items():
+        print(key, result["summary"])
 
 
 if __name__ == "__main__":

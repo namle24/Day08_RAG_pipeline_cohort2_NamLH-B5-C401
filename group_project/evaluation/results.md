@@ -29,6 +29,35 @@ Config B tốt hơn theo điểm trung bình. Hybrid + rerank thường cải th
 
 ---
 
+## Bonus Config: HyDE
+
+| Metric | HyDE query expansion |
+|--------|----------------------|
+| Faithfulness | 0.909 |
+| Answer Relevance | 0.612 |
+| Context Recall | 1.000 |
+| Context Precision | 0.933 |
+| Average | 0.864 |
+
+HyDE tạo một tài liệu giả định từ query, nối với query gốc rồi retrieve trên query mở rộng. Cấu hình này dùng để demo bonus HyDE, đặc biệt hữu ích khi câu hỏi ngắn hoặc thiếu từ khóa chính xác trong tài liệu.
+
+---
+
+## Team Pipeline Benchmark
+
+| Pipeline | Thành viên | Role | Faithfulness | Relevance | Recall | Precision | Average |
+|----------|------------|------|--------------|-----------|--------|-----------|---------|
+| bach_hybrid_legal | Đào Xuân Bách (2A202600640) | Legal corpus + hybrid retrieval | 0.887 | 0.593 | 1.000 | 0.907 | 0.847 |
+| linh_news_bm25 | Đỗ Thiện Lĩnh (2A202600775) | News corpus + BM25 | 0.935 | 0.611 | 1.000 | 0.933 | 0.870 |
+| nam_hyde_rag | Lê Hoài Nam (2A202600657) | HyDE + citation generation | 0.909 | 0.612 | 1.000 | 0.933 | 0.864 |
+| trung_dense_semantic | Nguyễn Đức Kiên Trung (2A202600769) | Dense semantic retrieval | 0.965 | 0.704 | 1.000 | 0.973 | 0.910 |
+| dinh_tfidf_lexical | Nhan Khánh Đình (2A202600673) | TF-IDF lexical bonus | 0.958 | 0.643 | 1.000 | 0.973 | 0.893 |
+| anh_fallback_safety | Phan Quốc Anh (2A202600890) | Fallback + safety | 0.966 | 0.705 | 1.000 | 0.987 | 0.914 |
+
+Bảng này chứng minh app nhóm đã tích hợp đủ 6 adapter pipeline, mỗi adapter có owner, role và retrieval focus riêng trong `group_project/pipeline_registry.py`.
+
+---
+
 ## Worst Performers (Bottom 3)
 
 | # | Question | Faithfulness | Relevance | Recall | Failure Stage | Root Cause |

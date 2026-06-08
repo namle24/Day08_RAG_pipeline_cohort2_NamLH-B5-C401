@@ -1,8 +1,17 @@
 """Task 5 — Semantic Search Module."""
 
 from collections import Counter
+from functools import lru_cache
 
 from .local_retrieval import corpus_idf, cosine_from_counters, expanded_tokens, get_chunks
+
+
+@lru_cache(maxsize=1)
+def _semantic_index():
+    chunks = tuple(get_chunks())
+    corpus_tokens = tuple(tuple(expanded_tokens(chunk["content"])) for chunk in chunks)
+    idf = corpus_idf([list(tokens) for tokens in corpus_tokens])
+    return chunks, corpus_tokens, idf
 
 
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
@@ -21,12 +30,10 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    chunks = list(get_chunks())
+    chunks, corpus_tokens, idf = _semantic_index()
     if not chunks or top_k <= 0:
         return []
 
-    corpus_tokens = [expanded_tokens(chunk["content"]) for chunk in chunks]
-    idf = corpus_idf(corpus_tokens)
     query_vector = Counter(expanded_tokens(query))
 
     results = []
