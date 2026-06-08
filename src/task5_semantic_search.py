@@ -1,13 +1,8 @@
-"""
-Task 5 — Semantic Search Module.
+"""Task 5 — Semantic Search Module."""
 
-Viết module tìm kiếm ngữ nghĩa (dense retrieval) trên vector store.
+from collections import Counter
 
-Yêu cầu:
-    - Input: query string + top_k
-    - Output: danh sách chunks có score, sorted descending
-    - Phải tương thích với embedding model và vector store ở Task 4
-"""
+from .local_retrieval import corpus_idf, cosine_from_counters, expanded_tokens, get_chunks
 
 
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
@@ -26,37 +21,26 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    # TODO: Implement semantic search
-    #
-    # Bước 1: Embed query bằng cùng model ở Task 4
-    # Bước 2: Query vector store (cosine similarity)
-    # Bước 3: Return top_k results
-    #
-    # Ví dụ với Weaviate:
-    # import weaviate
-    # from sentence_transformers import SentenceTransformer
-    #
-    # model = SentenceTransformer("BAAI/bge-m3")
-    # query_embedding = model.encode(query).tolist()
-    #
-    # client = weaviate.connect_to_local()
-    # collection = client.collections.get("DrugLawDocs")
-    #
-    # results = collection.query.near_vector(
-    #     near_vector=query_embedding,
-    #     limit=top_k,
-    #     return_metadata=MetadataQuery(distance=True)
-    # )
-    #
-    # return [
-    #     {
-    #         "content": obj.properties["content"],
-    #         "score": 1 - obj.metadata.distance,  # distance → similarity
-    #         "metadata": {"source": obj.properties["source"], ...}
-    #     }
-    #     for obj in results.objects
-    # ]
-    raise NotImplementedError("Implement semantic_search")
+    chunks = list(get_chunks())
+    if not chunks or top_k <= 0:
+        return []
+
+    corpus_tokens = [expanded_tokens(chunk["content"]) for chunk in chunks]
+    idf = corpus_idf(corpus_tokens)
+    query_vector = Counter(expanded_tokens(query))
+
+    results = []
+    for chunk, tokens in zip(chunks, corpus_tokens):
+        score = cosine_from_counters(query_vector, Counter(tokens), idf)
+        if score > 0:
+            results.append({
+                "content": chunk["content"],
+                "score": float(score),
+                "metadata": dict(chunk.get("metadata", {})),
+            })
+
+    results.sort(key=lambda item: item["score"], reverse=True)
+    return results[:top_k]
 
 
 if __name__ == "__main__":

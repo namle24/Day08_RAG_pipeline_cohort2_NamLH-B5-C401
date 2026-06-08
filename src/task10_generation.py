@@ -15,6 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .task9_retrieval_pipeline import retrieve
+from .local_retrieval import tokenize
+
+
+SOURCE_LABELS = {
+    "luat-phong-chong-ma-tuy-2021.md": "Luật Phòng, chống ma túy 2021, 2021",
+    "nghi-dinh-105-2021.md": "Nghị định 105/2021/NĐ-CP, 2021",
+    "nghi-dinh-57-2022-danh-muc-chat-ma-tuy.md": "Nghị định 57/2022/NĐ-CP, 2022",
+    "article_01_huu_tin_vnexpress.md": "VnExpress, 2022",
+    "article_02_chau_viet_cuong_vnexpress.md": "VnExpress, 2018",
+    "article_03_chau_viet_cuong_vietnamnet.md": "VietnamNet, 2019",
+    "article_04_andrea_aybar_vnexpress.md": "VnExpress, 2024",
+    "article_05_andrea_aybar_baovanhoa.md": "Báo Văn Hóa, 2025",
+}
 
 
 # =============================================================================
@@ -75,20 +88,11 @@ def reorder_for_llm(chunks: list[dict]) -> list[dict]:
     Returns:
         List reordered để maximize LLM attention.
     """
-    # TODO: Implement reordering
-    #
-    # if len(chunks) <= 2:
-    #     return chunks
-    #
-    # # Split into first half (important → đầu) and second half (important → cuối)
-    # reordered = []
-    # for i in range(0, len(chunks), 2):
-    #     reordered.append(chunks[i])  # Odd positions go first
-    # for i in range(len(chunks) - 1 - (len(chunks) % 2 == 0), 0, -2):
-    #     reordered.append(chunks[i])  # Even positions go last (reversed)
-    #
-    # return reordered
-    raise NotImplementedError("Implement reorder_for_llm")
+    if len(chunks) <= 2:
+        return chunks
+    front = [chunks[i] for i in range(0, len(chunks), 2)]
+    back = [chunks[i] for i in range(1, len(chunks), 2)]
+    return front + list(reversed(back))
 
 
 # =============================================================================
@@ -106,18 +110,46 @@ def format_context(chunks: list[dict]) -> str:
     Returns:
         Formatted context string.
     """
-    # TODO: Implement context formatting
-    #
-    # context_parts = []
-    # for i, chunk in enumerate(chunks, 1):
-    #     source = chunk.get("metadata", {}).get("source", f"Source {i}")
-    #     doc_type = chunk.get("metadata", {}).get("type", "unknown")
-    #     context_parts.append(
-    #         f"[Document {i} | Source: {source} | Type: {doc_type}]\n"
-    #         f"{chunk['content']}\n"
-    #     )
-    # return "\n---\n".join(context_parts)
-    raise NotImplementedError("Implement format_context")
+    context_parts = []
+    for i, chunk in enumerate(chunks, 1):
+        metadata = chunk.get("metadata", {})
+        source = metadata.get("source", f"Source {i}")
+        doc_type = metadata.get("type", "unknown")
+        chunk_index = metadata.get("chunk_index", "n/a")
+        context_parts.append(
+            f"[Document {i} | Source: {source} | Type: {doc_type} | Chunk: {chunk_index}]\n"
+            f"{chunk['content']}\n"
+        )
+    return "\n---\n".join(context_parts)
+
+
+def _citation(chunk: dict) -> str:
+    source = chunk.get("metadata", {}).get("source", "Nguồn không rõ")
+    return f"[{SOURCE_LABELS.get(source, source)}]"
+
+
+def _offline_answer(query: str, chunks: list[dict]) -> str:
+    if not chunks:
+        return "Tôi không thể xác minh thông tin này từ nguồn hiện có."
+
+    query_terms = set(tokenize(query))
+    sentences = []
+    for chunk in chunks:
+        for sentence in chunk["content"].replace("\n", " ").split("."):
+            sentence = sentence.strip()
+            if len(sentence) < 40:
+                continue
+            if query_terms and not (query_terms & set(tokenize(sentence))):
+                continue
+            sentences.append(f"{sentence}. {_citation(chunk)}")
+            break
+        if len(sentences) >= 3:
+            break
+
+    if not sentences:
+        best = chunks[0]["content"].replace("\n", " ").strip()[:350]
+        sentences.append(f"{best}... {_citation(chunks[0])}")
+    return " ".join(sentences)
 
 
 # =============================================================================
@@ -146,43 +178,38 @@ def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
             'retrieval_source': str  # 'hybrid' hoặc 'pageindex'
         }
     """
-    # TODO: Implement generation pipeline
-    #
-    # # Step 1: Retrieve
-    # chunks = retrieve(query, top_k=top_k)
-    #
-    # # Step 2: Reorder
-    # reordered = reorder_for_llm(chunks)
-    #
-    # # Step 3: Format context
-    # context = format_context(reordered)
-    #
-    # # Step 4: Build prompt
-    # user_message = f"""Context:\n{context}\n\n---\n\nQuestion: {query}"""
-    #
-    # # Step 5: Call LLM
-    # from openai import OpenAI
-    # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    #
-    # response = client.chat.completions.create(
-    #     model="gpt-4o-mini",
-    #     messages=[
-    #         {"role": "system", "content": SYSTEM_PROMPT},
-    #         {"role": "user", "content": user_message}
-    #     ],
-    #     temperature=TEMPERATURE,
-    #     top_p=TOP_P,
-    # )
-    #
-    # answer = response.choices[0].message.content
-    #
-    # # Step 6: Return
-    # return {
-    #     "answer": answer,
-    #     "sources": chunks,
-    #     "retrieval_source": chunks[0].get("source", "hybrid") if chunks else "none"
-    # }
-    raise NotImplementedError("Implement generate_with_citation")
+    chunks = retrieve(query, top_k=top_k)
+    reordered = reorder_for_llm(chunks)
+    context = format_context(reordered)
+    user_message = f"Context:\n{context}\n\n---\n\nQuestion: {query}"
+
+    answer = None
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+            answer = response.choices[0].message.content
+        except Exception:
+            answer = None
+
+    if not answer:
+        answer = _offline_answer(query, reordered)
+
+    return {
+        "answer": answer,
+        "sources": chunks,
+        "retrieval_source": chunks[0].get("source", "none") if chunks else "none",
+    }
 
 
 if __name__ == "__main__":

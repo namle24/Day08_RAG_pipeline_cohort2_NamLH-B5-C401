@@ -13,6 +13,7 @@ Cài đặt:
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -26,10 +27,12 @@ def setup_directory():
 
 # TODO: Điền danh sách URL bài báo cần crawl
 ARTICLE_URLS = [
-    # Ví dụ:
-    # "https://vnexpress.net/...",
-    # "https://tuoitre.vn/...",
-    # "https://thanhnien.vn/...",
+    "https://vnexpress.net/ma-tuy-trong-loi-song-showbiz-5074606.html",
+    "https://thanhnien.vn/ma-tuy-va-showbiz-su-thanh-loc-can-bat-dau-tu-nghe-si-185260513123425952.htm",
+    "https://vnexpress.net/ca-si-long-nhat-son-ngoc-minh-bi-bat-vi-lien-quan-ma-tuy-5060857.html",
+    "https://vnexpress.net/anh-em-ca-si-chi-dan-ru-nhieu-nguoi-choi-ma-tuy-nhu-the-nao-4929804.html",
+    "https://ngoisao.vnexpress.net/nhung-nghe-si-viet-nga-ngua-vi-ma-tuy-4816068.html",
+
 ]
 
 
@@ -45,18 +48,35 @@ async def crawl_article(url: str) -> dict:
             "content_markdown": str
         }
     """
-    from crawl4ai import AsyncWebCrawler
+    try:
+        from crawl4ai import AsyncWebCrawler
 
-    # TODO: Implement crawling logic
-    # async with AsyncWebCrawler() as crawler:
-    #     result = await crawler.arun(url=url)
-    #     return {
-    #         "url": url,
-    #         "title": result.metadata.get("title", "Unknown"),
-    #         "date_crawled": datetime.now().isoformat(),
-    #         "content_markdown": result.markdown,
-    #     }
-    raise NotImplementedError("Implement crawl_article")
+        async with AsyncWebCrawler() as crawler:
+            result = await crawler.arun(url=url)
+            return {
+                "url": url,
+                "title": result.metadata.get("title", "Unknown"),
+                "date_crawled": datetime.now().isoformat(),
+                "content_markdown": result.markdown,
+            }
+    except Exception:
+        # Fallback nhẹ để script vẫn dùng được khi Crawl4AI/browser chưa sẵn sàng.
+        import requests
+
+        response = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+        html = response.text
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+        title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else "Unknown"
+        text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=re.I | re.S)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return {
+            "url": url,
+            "title": title,
+            "date_crawled": datetime.now().isoformat(),
+            "content_markdown": f"# {title}\n\n{text}",
+        }
 
 
 async def crawl_all():

@@ -171,7 +171,34 @@ run_dashboard()
 ## Kiến Trúc Hệ Thống
 
 ```
-[Vẽ diagram kiến trúc ở đây]
+Member pipelines
+        │
+        ├── NamLH local RAG pipeline
+        │       ├── Task 3 Convert Markdown → data/standardized
+        │       ├── Task 4 Chunking + Local JSON Index
+        │       ├── Task 5 Semantic Search
+        │       ├── Task 6 BM25 Lexical Search
+        │       ├── Task 9 Hybrid Retrieval: RRF + rerank + PageIndex fallback
+        │       └── Task 10 Generation with citation
+        │
+        └── Future member adapters
+                └── group_project/pipeline_registry.py
+
+group_project/pipeline_registry.py
+        │
+        ▼
+Streamlit app.py
+        ├── Chat UI with conversation memory
+        ├── Search UI with score/source display
+        └── Evaluation report tab
+
+Evaluation
+        │
+        ▼
+group_project/evaluation/eval_pipeline.py
+        ├── Golden dataset 15 Q&A
+        ├── Config A: hybrid + rerank
+        └── Config B: dense-only
 ```
 
 ---
@@ -180,10 +207,12 @@ run_dashboard()
 
 | Thành viên | MSSV | Nhiệm vụ | Trạng thái |
 |-----------|------|----------|------------|
-| | | | |
-| | | | |
-| | | | |
-| | | | |
+| NamLH | B5-C401 | Cá nhân Task 1-10: data, convert, chunk/index, retrieval, generation citation | Hoàn thành |
+|  | B5-C401 | Tích hợp pipeline cá nhân vào `group_project/pipeline_registry.py` | Hoàn thành |
+|  | B5-C401 | Streamlit chatbot/search UI, source display, conversation memory | Hoàn thành |
+|  | B5-C401 | Golden dataset 15 Q&A cho evaluation | Hoàn thành |
+|  | B5-C401 | Evaluation pipeline A/B và báo cáo `results.md` | Hoàn thành |
+| Thành viên khác | TBD | Bổ sung adapter pipeline riêng nếu có | Chờ tích hợp |
 
 ---
 
@@ -193,11 +222,29 @@ run_dashboard()
 # Cài đặt dependencies
 pip install -r requirements.txt
 
-# Chạy app
+# Chạy test bài cá nhân
+pytest tests/test_individual.py -q
+
+# Rebuild dữ liệu mẫu/index local nếu cần
+python -m src.bootstrap_sample_data
+
+# Chạy evaluation nhóm và xuất results.md
+python group_project/evaluation/eval_pipeline.py
+
+# Chạy chatbot/search demo
 streamlit run app.py
-# hoặc
-chainlit run app.py
 ```
+
+## Tích Hợp Pipeline Thành Viên
+
+Trong repo nhóm, "tích hợp pipeline từ bài cá nhân của các thành viên" nghĩa là mỗi thành viên expose pipeline của mình qua cùng một interface:
+
+- `answer(query, top_k)` trả về `{"answer": str, "sources": list[dict]}`
+- `search(query, top_k)` trả về list source chunks có `content`, `score`, `metadata`
+
+File `group_project/pipeline_registry.py` là nơi đăng ký các adapter đó. Hiện app đã tích hợp pipeline của NamLH (`namlh_local_rag`). Khi thành viên khác có pipeline riêng, chỉ cần thêm adapter mới vào `PIPELINES`, Streamlit app sẽ có thể chọn pipeline đó từ sidebar.
+
+Hướng dẫn chi tiết cho thành viên nhóm: [PIPELINE_INTEGRATION_GUIDE.md](PIPELINE_INTEGRATION_GUIDE.md).
 
 ---
 

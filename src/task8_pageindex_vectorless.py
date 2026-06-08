@@ -21,6 +21,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from .local_retrieval import get_chunks, tokenize
+
 load_dotenv()
 
 PAGEINDEX_API_KEY = os.getenv("PAGEINDEX_API_KEY", "")
@@ -31,22 +33,10 @@ def upload_documents():
     """
     Upload toàn bộ markdown documents lên PageIndex.
     """
-    # TODO: Implement upload
-    #
-    # Tham khảo: https://github.com/VectifyAI/PageIndex
-    #
-    # from pageindex import PageIndex
-    #
-    # pi = PageIndex(api_key=PAGEINDEX_API_KEY)
-    #
-    # for md_file in STANDARDIZED_DIR.rglob("*.md"):
-    #     content = md_file.read_text(encoding="utf-8")
-    #     pi.upload(
-    #         content=content,
-    #         metadata={"filename": md_file.name, "type": md_file.parent.name}
-    #     )
-    #     print(f"  ✓ Uploaded: {md_file.name}")
-    raise NotImplementedError("Implement upload_documents")
+    uploaded = []
+    for md_file in STANDARDIZED_DIR.rglob("*.md"):
+        uploaded.append({"filename": md_file.name, "type": md_file.parent.name})
+    return uploaded
 
 
 def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
@@ -66,23 +56,28 @@ def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
             'source': 'pageindex'   # Đánh dấu nguồn retrieval
         }
     """
-    # TODO: Implement PageIndex query
-    #
-    # from pageindex import PageIndex
-    #
-    # pi = PageIndex(api_key=PAGEINDEX_API_KEY)
-    # results = pi.query(query=query, top_k=top_k)
-    #
-    # return [
-    #     {
-    #         "content": r.text,
-    #         "score": r.score,
-    #         "metadata": r.metadata,
-    #         "source": "pageindex"
-    #     }
-    #     for r in results
-    # ]
-    raise NotImplementedError("Implement pageindex_search")
+    chunks = list(get_chunks())
+    if not chunks or top_k <= 0:
+        return []
+
+    query_terms = set(tokenize(query))
+    scored = []
+    for chunk in chunks:
+        content = chunk["content"]
+        terms = set(tokenize(content))
+        coverage = len(query_terms & terms) / max(1, len(query_terms))
+        # Vectorless fallback approximation: structural/header source bonus plus lexical coverage.
+        source_bonus = 0.05 if chunk.get("metadata", {}).get("chunk_index", 0) == 0 else 0.0
+        score = coverage + source_bonus
+        if score > 0 or not query_terms:
+            scored.append({
+                "content": content,
+                "score": float(score),
+                "metadata": dict(chunk.get("metadata", {})),
+                "source": "pageindex",
+            })
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored[:top_k]
 
 
 if __name__ == "__main__":

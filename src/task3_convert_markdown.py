@@ -14,9 +14,15 @@ Hướng dẫn:
 """
 
 import json
+import re
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
-from markitdown import MarkItDown
+try:
+    from markitdown import MarkItDown
+except Exception:  # pragma: no cover - optional dependency in offline tests
+    MarkItDown = None
 
 LANDING_DIR = Path(__file__).parent.parent / "data" / "landing"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "standardized"
@@ -28,17 +34,15 @@ def convert_legal_docs():
     output_dir = OUTPUT_DIR / "legal"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    md = MarkItDown()
+    md = MarkItDown() if MarkItDown else None
 
     for filepath in legal_dir.iterdir():
         if filepath.suffix.lower() in (".pdf", ".docx", ".doc"):
             print(f"Converting: {filepath.name}")
-            # TODO: Convert và lưu file
-            # result = md.convert(str(filepath))
-            # output_path = output_dir / f"{filepath.stem}.md"
-            # output_path.write_text(result.text_content, encoding="utf-8")
-            # print(f"  ✓ Saved: {output_path}")
-            raise NotImplementedError("Implement convert_legal_docs")
+            output_path = output_dir / f"{filepath.stem}.md"
+            text = _convert_file_to_text(filepath, md)
+            output_path.write_text(text, encoding="utf-8")
+            print(f"  ✓ Saved: {output_path}")
 
 
 def convert_news_articles():
@@ -50,19 +54,45 @@ def convert_news_articles():
     for filepath in news_dir.iterdir():
         if filepath.suffix.lower() == ".json":
             print(f"Converting: {filepath.name}")
-            # TODO: Đọc JSON, extract content_markdown, lưu thành .md
-            # data = json.loads(filepath.read_text(encoding="utf-8"))
-            # output_path = output_dir / f"{filepath.stem}.md"
-            #
-            # # Thêm metadata header
-            # header = f"# {data.get('title', 'Unknown')}\n\n"
-            # header += f"**Source:** {data.get('url', 'N/A')}\n"
-            # header += f"**Crawled:** {data.get('date_crawled', 'N/A')}\n\n---\n\n"
-            #
-            # content = header + data.get("content_markdown", "")
-            # output_path.write_text(content, encoding="utf-8")
-            # print(f"  ✓ Saved: {output_path}")
-            raise NotImplementedError("Implement convert_news_articles")
+            data = json.loads(filepath.read_text(encoding="utf-8"))
+            output_path = output_dir / f"{filepath.stem}.md"
+            header = f"# {data.get('title', 'Unknown')}\n\n"
+            header += f"**Source:** {data.get('url', 'N/A')}\n"
+            header += f"**Crawled:** {data.get('date_crawled', 'N/A')}\n\n---\n\n"
+            content = header + data.get("content_markdown", data.get("content", ""))
+            output_path.write_text(content, encoding="utf-8")
+            print(f"  ✓ Saved: {output_path}")
+
+
+def _convert_file_to_text(filepath: Path, md) -> str:
+    if md is not None:
+        try:
+            result = md.convert(str(filepath))
+            if getattr(result, "text_content", ""):
+                return result.text_content
+        except Exception:
+            pass
+
+    if filepath.suffix.lower() == ".docx":
+        return _docx_to_text(filepath)
+
+    raw = filepath.read_bytes()
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _docx_to_text(filepath: Path) -> str:
+    with zipfile.ZipFile(filepath) as archive:
+        xml = archive.read("word/document.xml")
+    root = ElementTree.fromstring(xml)
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paragraphs = []
+    for paragraph in root.findall(".//w:p", ns):
+        texts = [node.text or "" for node in paragraph.findall(".//w:t", ns)]
+        line = "".join(texts).strip()
+        if line:
+            paragraphs.append(line)
+    text = "\n\n".join(paragraphs)
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 
 def convert_all():
